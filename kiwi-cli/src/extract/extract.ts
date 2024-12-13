@@ -22,6 +22,7 @@ import {
 } from '../utils';
 import { replaceAndUpdate, hasImportI18N, createImportI18N } from './replace';
 import { getProjectConfig } from '../utils';
+import * as fs from 'fs';
 
 const CONFIG = getProjectConfig();
 
@@ -50,13 +51,15 @@ function findAllChineseText(dir: string) {
   }
   const filterFiles = files.filter(file => {
     return (
-      (isFile(file) && file.endsWith('.ts')) ||
-      file.endsWith('.tsx') ||
-      file.endsWith('.vue') ||
-      file.endsWith('.js') ||
-      file.endsWith('.jsx')
+      (isFile(file) && file.endsWith('.ts')) || file.endsWith('.tsx') || file.endsWith('.js') || file.endsWith('.jsx')
     );
   });
+  try {
+    fs.writeFileSync(`${process.cwd()}/text/filterFiles.txt`, JSON.stringify(filterFiles, null, 2), 'utf8');
+    console.log(`所有符合条件的文件写入成功--${process.cwd()}/text/filterFiles.txt`);
+  } catch (err) {
+    console.error('写入文件失败:', err);
+  }
   const allTexts = filterFiles.reduce((pre, file) => {
     const code = readFile(file);
     const texts = findChineseText(code, file);
@@ -68,6 +71,13 @@ function findAllChineseText(dir: string) {
 
     return texts.length > 0 ? pre.concat({ file, texts: sortTexts }) : pre;
   }, []);
+
+  try {
+    fs.writeFileSync(`${process.cwd()}/text/allTexts.txt`, JSON.stringify(allTexts, null, 2), 'utf8');
+    console.log(`所有提取的文本写入成功--${process.cwd()}/text/allTexts.txt`);
+  } catch (err) {
+    console.error('写入文件失败:', err);
+  }
 
   return allTexts;
 }
@@ -228,6 +238,12 @@ function extractAll({ dirPath, prefix }: { dirPath?: string; prefix?: string }) 
     }, []);
     const len = item.texts.length - targetStrs.length;
     if (len > 0) {
+      try {
+        fs.appendFileSync(`${process.cwd()}/text/generateKeyAndReplace.txt`, `\n${item.file}`, 'utf8');
+        console.log('文件写入成功');
+      } catch (err) {
+        console.error('写入文件失败:', err);
+      }
       console.log(colors.red(`存在 ${highlightText(len)} 处文案无法替换，请避免在模板字符串的变量中嵌套中文`));
     }
 
@@ -259,6 +275,12 @@ function extractAll({ dirPath, prefix }: { dirPath?: string; prefix?: string }) 
       failInfo(`未得到翻译结果，${currentFilename}替换失败！`);
       return;
     }
+    try {
+      fs.appendFileSync(`${process.cwd()}/text/translateTexts.txt`, JSON.stringify(translateTexts, null, 2), 'utf8');
+      console.log('文件写入成功');
+    } catch (err) {
+      console.error('写入文件失败:', err);
+    }
 
     const replaceableStrs = getReplaceableStrs(currentFilename, langsPrefix, translateTexts, targetStrs);
 
@@ -278,18 +300,23 @@ function extractAll({ dirPath, prefix }: { dirPath?: string; prefix?: string }) 
         successInfo(`${currentFilename} 替换完成，共替换 ${targetStrs.length} 处文案！`);
       })
       .catch(e => {
+        console.log('===failInfo===');
         failInfo(e.message);
       });
+
+    return targetStrs.length;
   };
 
+  let result = 0;
   allTargetStrs
     .reduce((prev, current) => {
-      return prev.then(() => {
+      return prev.then(res => {
+        result += res;
         return generateKeyAndReplace(current);
       });
-    }, Promise.resolve())
+    }, Promise.resolve(0))
     .then(() => {
-      successInfo('全部替换完成！');
+      successInfo(`全部替换完成！共替换${highlightText(result)}处文本`);
     })
     .catch((e: any) => {
       failInfo(e.message);
