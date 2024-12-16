@@ -18,7 +18,8 @@ import {
   translateKeyText,
   successInfo,
   failInfo,
-  highlightText
+  highlightText,
+  getLangDir
 } from '../utils';
 import { replaceAndUpdate, hasImportI18N, createImportI18N } from './replace';
 import { getProjectConfig } from '../utils';
@@ -54,12 +55,6 @@ function findAllChineseText(dir: string) {
       (isFile(file) && file.endsWith('.ts')) || file.endsWith('.tsx') || file.endsWith('.js') || file.endsWith('.jsx')
     );
   });
-  try {
-    fs.writeFileSync(`${process.cwd()}/text/filterFiles.txt`, JSON.stringify(filterFiles, null, 2), 'utf8');
-    console.log(`所有符合条件的文件写入成功--${process.cwd()}/text/filterFiles.txt`);
-  } catch (err) {
-    console.error('写入文件失败:', err);
-  }
   const allTexts = filterFiles.reduce((pre, file) => {
     const code = readFile(file);
     const texts = findChineseText(code, file);
@@ -99,29 +94,19 @@ function getTransOriginText(text: string) {
  * @returns string[]
  */
 function getSuggestion(currentFilename: string) {
-  let suggestion = [];
-  const suggestPageRegex = /\/pages\/\w+\/([^\/]+)\/([^\/\.]+)/;
+  let fileNameWithoutCwd;
 
-  if (currentFilename.includes('/pages/')) {
-    suggestion = currentFilename.match(suggestPageRegex);
-  }
-  if (suggestion) {
-    suggestion.shift();
-  }
-  /** 如果没有匹配到 Key */
-  if (!(suggestion && suggestion.length)) {
-    const names = slash(currentFilename).split('/');
-    const fileName = _.last(names) as any;
-    const fileKey = fileName.split('.')[0].replace(new RegExp('-', 'g'), '_');
-    const dir = names[names.length - 2].replace(new RegExp('-', 'g'), '_');
-    if (dir === fileKey) {
-      suggestion = [dir];
-    } else {
-      suggestion = [dir, fileKey];
-    }
-  }
+  const basePath = CONFIG.entry ? path.resolve(process.cwd(), CONFIG.entry) : process.cwd();
+  const suggestRegex = new RegExp(`${basePath.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&')}/(.+)`);
 
-  return suggestion;
+  fileNameWithoutCwd = currentFilename.match(suggestRegex)?.[1];
+
+  const names = slash(fileNameWithoutCwd).split('/');
+  const fileName = _.last(names) as any;
+  const fileKey = fileName.split('.')[0].replace(new RegExp('-', 'g'), '_');
+  const dir = names.slice(0, -1).join('.');
+
+  return [dir, fileKey];
 }
 
 /**
@@ -223,6 +208,7 @@ function extractAll({ dirPath, prefix }: { dirPath?: string; prefix?: string }) 
 
   console.log('即将截取每个中文文案的前5位翻译生成key值，并替换中...');
 
+  const extractMap = {};
   // 对当前文件进行文案key生成和替换
   const generateKeyAndReplace = async item => {
     const currentFilename = item.file;
@@ -238,12 +224,6 @@ function extractAll({ dirPath, prefix }: { dirPath?: string; prefix?: string }) 
     }, []);
     const len = item.texts.length - targetStrs.length;
     if (len > 0) {
-      try {
-        fs.appendFileSync(`${process.cwd()}/text/generateKeyAndReplace.txt`, `\n${item.file}`, 'utf8');
-        console.log('文件写入成功');
-      } catch (err) {
-        console.error('写入文件失败:', err);
-      }
       console.log(colors.red(`存在 ${highlightText(len)} 处文案无法替换，请避免在模板字符串的变量中嵌套中文`));
     }
 
@@ -275,22 +255,20 @@ function extractAll({ dirPath, prefix }: { dirPath?: string; prefix?: string }) 
       failInfo(`未得到翻译结果，${currentFilename}替换失败！`);
       return;
     }
-    try {
-      fs.appendFileSync(`${process.cwd()}/text/translateTexts.txt`, JSON.stringify(translateTexts, null, 2), 'utf8');
-      console.log('文件写入成功');
-    } catch (err) {
-      console.error('写入文件失败:', err);
-    }
-
     const replaceableStrs = getReplaceableStrs(currentFilename, langsPrefix, translateTexts, targetStrs);
+
+    const srcLangDir = getLangDir(CONFIG.srcLang);
+    const targetFilename = `${srcLangDir}/index.${CONFIG.fileType}`;
 
     await replaceableStrs
       .reduce((prev, obj) => {
         return prev.then(() => {
-          return replaceAndUpdate(currentFilename, obj.target, `I18N.${obj.key}`, false, obj.needWrite);
+          return replaceAndUpdate(currentFilename, obj.target, `I18N.${obj.key}`, false, obj.needWrite, extractMap);
         });
       }, Promise.resolve())
       .then(() => {
+        fs.writeFileSync(targetFilename, `export default ${JSON.stringify(extractMap, null, 2)}`);
+
         // 添加 import I18N
         if (!hasImportI18N(currentFilename)) {
           const code = createImportI18N(currentFilename);
