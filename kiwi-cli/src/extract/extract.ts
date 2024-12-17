@@ -18,10 +18,12 @@ import {
   translateKeyText,
   successInfo,
   failInfo,
-  highlightText
+  highlightText,
+  getLangDir
 } from '../utils';
 import { replaceAndUpdate, hasImportI18N, createImportI18N } from './replace';
 import { getProjectConfig } from '../utils';
+import * as fs from 'fs';
 
 const CONFIG = getProjectConfig();
 
@@ -50,11 +52,7 @@ function findAllChineseText(dir: string) {
   }
   const filterFiles = files.filter(file => {
     return (
-      (isFile(file) && file.endsWith('.ts')) ||
-      file.endsWith('.tsx') ||
-      file.endsWith('.vue') ||
-      file.endsWith('.js') ||
-      file.endsWith('.jsx')
+      (isFile(file) && file.endsWith('.ts')) || file.endsWith('.tsx') || file.endsWith('.js') || file.endsWith('.jsx')
     );
   });
   const allTexts = filterFiles.reduce((pre, file) => {
@@ -68,6 +66,13 @@ function findAllChineseText(dir: string) {
 
     return texts.length > 0 ? pre.concat({ file, texts: sortTexts }) : pre;
   }, []);
+
+  try {
+    fs.writeFileSync(`${process.cwd()}/text/allTexts.txt`, JSON.stringify(allTexts, null, 2), 'utf8');
+    console.log(`所有提取的文本写入成功--${process.cwd()}/text/allTexts.txt`);
+  } catch (err) {
+    console.error('写入文件失败:', err);
+  }
 
   return allTexts;
 }
@@ -89,29 +94,19 @@ function getTransOriginText(text: string) {
  * @returns string[]
  */
 function getSuggestion(currentFilename: string) {
-  let suggestion = [];
-  const suggestPageRegex = /\/pages\/\w+\/([^\/]+)\/([^\/\.]+)/;
+  let fileNameWithoutCwd;
 
-  if (currentFilename.includes('/pages/')) {
-    suggestion = currentFilename.match(suggestPageRegex);
-  }
-  if (suggestion) {
-    suggestion.shift();
-  }
-  /** 如果没有匹配到 Key */
-  if (!(suggestion && suggestion.length)) {
-    const names = slash(currentFilename).split('/');
-    const fileName = _.last(names) as any;
-    const fileKey = fileName.split('.')[0].replace(new RegExp('-', 'g'), '_');
-    const dir = names[names.length - 2].replace(new RegExp('-', 'g'), '_');
-    if (dir === fileKey) {
-      suggestion = [dir];
-    } else {
-      suggestion = [dir, fileKey];
-    }
-  }
+  const basePath = CONFIG.entry ? path.resolve(process.cwd(), CONFIG.entry) : process.cwd();
+  const suggestRegex = new RegExp(`${basePath.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&')}/(.+)`);
 
-  return suggestion;
+  fileNameWithoutCwd = currentFilename.match(suggestRegex)?.[1];
+
+  const names = slash(fileNameWithoutCwd).split('/');
+  const fileName = _.last(names) as any;
+  const fileKey = fileName.split('.')[0].replace(new RegExp('-', 'g'), '_');
+  const dir = names.slice(0, -1).join('.');
+
+  return [dir, fileKey];
 }
 
 /**
@@ -213,6 +208,7 @@ function extractAll({ dirPath, prefix }: { dirPath?: string; prefix?: string }) 
 
   console.log('即将截取每个中文文案的前5位翻译生成key值，并替换中...');
 
+  const extractMap = {};
   // 对当前文件进行文案key生成和替换
   const generateKeyAndReplace = async item => {
     const currentFilename = item.file;
@@ -259,16 +255,20 @@ function extractAll({ dirPath, prefix }: { dirPath?: string; prefix?: string }) 
       failInfo(`未得到翻译结果，${currentFilename}替换失败！`);
       return;
     }
-
     const replaceableStrs = getReplaceableStrs(currentFilename, langsPrefix, translateTexts, targetStrs);
+
+    const srcLangDir = getLangDir(CONFIG.srcLang);
+    const targetFilename = `${srcLangDir}/index.${CONFIG.fileType}`;
 
     await replaceableStrs
       .reduce((prev, obj) => {
         return prev.then(() => {
-          return replaceAndUpdate(currentFilename, obj.target, `I18N.${obj.key}`, false, obj.needWrite);
+          return replaceAndUpdate(currentFilename, obj.target, `I18N.${obj.key}`, false, obj.needWrite, extractMap);
         });
       }, Promise.resolve())
       .then(() => {
+        fs.writeFileSync(targetFilename, `export default ${JSON.stringify(extractMap, null, 2)}`);
+
         // 添加 import I18N
         if (!hasImportI18N(currentFilename)) {
           const code = createImportI18N(currentFilename);
@@ -278,18 +278,23 @@ function extractAll({ dirPath, prefix }: { dirPath?: string; prefix?: string }) 
         successInfo(`${currentFilename} 替换完成，共替换 ${targetStrs.length} 处文案！`);
       })
       .catch(e => {
+        console.log('===failInfo===');
         failInfo(e.message);
       });
+
+    return targetStrs.length;
   };
 
+  let result = 0;
   allTargetStrs
     .reduce((prev, current) => {
-      return prev.then(() => {
+      return prev.then(res => {
+        result += res;
         return generateKeyAndReplace(current);
       });
-    }, Promise.resolve())
+    }, Promise.resolve(0))
     .then(() => {
-      successInfo('全部替换完成！');
+      successInfo(`全部替换完成！共替换${highlightText(result)}处文本`);
     })
     .catch((e: any) => {
       failInfo(e.message);
