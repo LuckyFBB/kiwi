@@ -25,11 +25,9 @@ export const PROJECT_CONFIG = {
       concurrentLimit: 10,
       requestOptions: {}
     },
-    defaultTranslateKeyApi: 'Pinyin', // 批量提取文案时生成key值时的默认翻译源
     importI18N: `import I18N from 'src/utils/I18N';`,
     ignoreDir: [],
-    ignoreFile: [],
-    entry: ''
+    ignoreFile: []
   },
   langMap: {
     ['en-US']: 'en',

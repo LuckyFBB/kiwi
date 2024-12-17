@@ -91,6 +91,14 @@ function findTextInJsOrTs(code: string) {
       const { start, end, value } = node as babelTypes.StringLiteral;
       if (value && value.match(DOUBLE_BYTE_REGEX)) {
         const range = { start, end };
+        if (nodePath.parentPath.node.type === 'JSXAttribute') {
+          matches.push({
+            range,
+            text: value,
+            type: 'jsx'
+          });
+          return;
+        }
         matches.push({
           range,
           text: value,
@@ -111,21 +119,16 @@ function findTextInJsOrTs(code: string) {
         });
       }
     },
-    JSXElement({ node }) {
-      const { children } = node as babelTypes.JSXElement;
-      children.forEach(child => {
-        if (babelTypes.isJSXText(child)) {
-          const { value, start, end } = child;
-          const range = { start, end };
-          if (value.match(DOUBLE_BYTE_REGEX)) {
-            matches.push({
-              range,
-              text: value.trim(),
-              type: 'jsx'
-            });
-          }
-        }
-      });
+    JSXText({ node }) {
+      const { value, start, end } = node;
+      const range = { start, end };
+      if (value.match(DOUBLE_BYTE_REGEX)) {
+        matches.push({
+          range,
+          text: value.trim(),
+          type: 'jsx'
+        });
+      }
     }
   });
   return matches;

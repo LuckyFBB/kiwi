@@ -119,12 +119,8 @@ function replaceAndUpdate(filePath, arg, val, validateDuplicate, needWrite = tru
     const preTextStart = start - 1;
     const [last2Char] = code.slice(preTextStart, start + 1).split('');
     let finalReplaceVal = val;
-    if (last2Char === '=') {
-      if (isHtmlFile) {
-        finalReplaceVal = '{{' + val + '}}';
-      } else {
-        finalReplaceVal = '{' + val + '}';
-      }
+    if (last2Char === '=' && isHtmlFile) {
+      finalReplaceVal = '{{' + val + '}}';
     }
     newCode = `${code.slice(0, start)}${finalReplaceVal}${code.slice(end)}`;
   } else if (arg.type === 'jsx') {

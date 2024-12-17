@@ -6,7 +6,6 @@ import * as path from 'path';
 import * as _ from 'lodash';
 import * as inquirer from 'inquirer';
 import * as fs from 'fs';
-import { pinyin } from 'pinyin-pro';
 import { PROJECT_CONFIG, KIWI_CONFIG_FILE } from './const';
 const colors = require('colors');
 
@@ -161,48 +160,6 @@ function translateText(text, toLang) {
   );
 }
 
-/**
- * 翻译中文
- */
-function translateKeyText(text: string, origin: string) {
-  const CONFIG = getProjectConfig();
-  const { appId, appKey } = CONFIG.baiduApiKey;
-  const baiduTranslate = require('baidu-translate');
-
-  function _translateText() {
-    return withTimeout(
-      new Promise((resolve, reject) => {
-        // Baidu
-        if (origin === 'Baidu') {
-          baiduTranslate(
-            appId,
-            appKey,
-            'en',
-            'zh'
-          )(text)
-            .then(data => {
-              if (data && data.trans_result) {
-                const result = data.trans_result.map(item => item.dst) || [];
-                resolve(result);
-              }
-            })
-            .catch(err => {
-              reject(err);
-            });
-        }
-        // Pinyin
-        if (origin === 'Pinyin') {
-          const result = pinyin(text, { toneType: 'none' });
-          resolve(result.split('$'));
-        }
-      }),
-      3000
-    );
-  }
-
-  return retry(_translateText, 3);
-}
-
 function findMatchKey(langObj, text) {
   for (const key in langObj) {
     if (langObj[key] === text) {
@@ -239,7 +196,6 @@ function flatten(obj, prefix = '') {
   }
   return ret;
 }
-
 /**
  * 获取翻译源类型
  */
@@ -299,6 +255,32 @@ function highlightText(message: string | number) {
   return colors.yellow(`${message}`);
 }
 
+/**
+ * 创建文件及其目录
+ * @param {string} filePath - 文件的完整路径
+ * @param {string} [content=''] - 文件的初始内容
+ */
+function createFileAndDirectories(filePath, content = '') {
+  const directory = path.dirname(filePath);
+
+  if (!fs.existsSync(directory)) {
+    fs.mkdirSync(directory, { recursive: true });
+  }
+
+  fs.writeFileSync(filePath, content, 'utf8');
+}
+
+function getFilePathWithoutCwd(filePath, dir) {
+  const CONFIG = getProjectConfig();
+
+  const basePath = path.resolve(process.cwd(), dir);
+
+  console.log('===basePath', basePath);
+  const suggestRegex = new RegExp(`${basePath.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&')}/(.+)`);
+
+  return filePath.match(suggestRegex)?.[1];
+}
+
 export {
   getKiwiDir,
   getLangDir,
@@ -313,8 +295,9 @@ export {
   flatten,
   lookForFiles,
   getTranslateOriginType,
-  translateKeyText,
   successInfo,
   failInfo,
-  highlightText
+  highlightText,
+  createFileAndDirectories,
+  getFilePathWithoutCwd
 };
