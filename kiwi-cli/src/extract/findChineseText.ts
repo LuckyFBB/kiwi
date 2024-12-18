@@ -75,11 +75,15 @@ function removeFileComment(code, fileName) {
  * 查找 JS/TS 文件中的中文
  * @Param code
  */
-function findTextInJsOrTs(code: string) {
+function findTextInJsOrTs(code: string, isJSX = false) {
   const matches = [];
+  const plugins: babelParser.ParserOptions['plugins'] = ['decorators-legacy', 'typescript'];
+  if (isJSX) {
+    plugins.push('jsx');
+  }
   const ast = babelParser.parse(code, {
     sourceType: 'module',
-    plugins: ['jsx', 'decorators-legacy', 'typescript']
+    plugins
   });
   babelTraverse.default(ast, {
     StringLiteral(nodePath) {
@@ -390,13 +394,10 @@ function findChineseText(code: string, fileName: string) {
     return findTextInHtml(code);
   } else if (fileName.endsWith('.vue')) {
     return findTextInVue(code);
-  } else if (
-    fileName.endsWith('.js') ||
-    fileName.endsWith('.jsx') ||
-    fileName.endsWith('.tsx') ||
-    fileName.endsWith('.ts')
-  ) {
+  } else if (fileName.endsWith('.js') || fileName.endsWith('.ts')) {
     return findTextInJsOrTs(code);
+  } else if (fileName.endsWith('.jsx') || fileName.endsWith('.tsx')) {
+    return findTextInJsOrTs(code, true);
   }
 }
 

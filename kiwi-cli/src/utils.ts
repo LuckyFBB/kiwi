@@ -271,11 +271,8 @@ function createFileAndDirectories(filePath, content = '') {
 }
 
 function getFilePathWithoutCwd(filePath, dir) {
-  const CONFIG = getProjectConfig();
-
   const basePath = path.resolve(process.cwd(), dir);
 
-  console.log('===basePath', basePath);
   const suggestRegex = new RegExp(`${basePath.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&')}/(.+)`);
 
   return filePath.match(suggestRegex)?.[1];
