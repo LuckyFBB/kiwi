@@ -115,24 +115,38 @@ function replaceAndUpdate(filePath, arg, val, validateDuplicate, needWrite = tru
   let newCode = code;
   let finalReplaceText = arg.text;
   const { start, end } = arg.range;
-  if (arg.type === 'string') {
+  if (arg.isString) {
+    // 如果引号左侧是 等号，则可能是 jsx 的 props，此时要替换成 {
     const preTextStart = start - 1;
-    const [last2Char] = code.slice(preTextStart, start + 1).split('');
+    const [last2Char, last1Char] = code.slice(preTextStart, start + 1).split('');
     let finalReplaceVal = val;
-    if (last2Char === '=' && isHtmlFile) {
-      finalReplaceVal = '{{' + val + '}}';
+    if (last2Char === '=') {
+      if (isHtmlFile) {
+        finalReplaceVal = '{{' + val + '}}';
+      } else if (isVueFile) {
+        finalReplaceVal = '{{' + val + '}}';
+      } else {
+        finalReplaceVal = '{' + val + '}';
+      }
+    }
+    if (last1Char === '`') {
+      if (arg.expressions.length) {
+        const kvPair = arg.expressions.map((expression, index) => {
+          return `val${index + 1}: ${expression}`;
+        });
+        finalReplaceVal = `I18N.template(${val}, {${kvPair.join(',\n')}})`;
+        arg.expressions.forEach((expression, index) => {
+          finalReplaceText = finalReplaceText.replace(`\${${expression}}`, `{val${index + 1}}`);
+        });
+      }
     }
     newCode = `${code.slice(0, start)}${finalReplaceVal}${code.slice(end)}`;
-  } else if (arg.type === 'jsx') {
+  } else {
     if (isHtmlFile || isVueFile) {
       newCode = `${code.slice(0, start)}{{${val}}}${code.slice(end)}`;
     } else {
       newCode = `${code.slice(0, start)}{${val}}${code.slice(end)}`;
     }
-  }
-  if (arg.type === 'template') {
-    let finalReplaceVal = '${' + val + '}';
-    newCode = `${code.slice(0, start)}${finalReplaceVal}${code.slice(end)}`;
   }
 
   try {

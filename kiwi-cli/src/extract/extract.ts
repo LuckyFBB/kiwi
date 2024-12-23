@@ -135,7 +135,7 @@ function getReplaceableStrs({
           needWrite: false
         });
       }
-      const transText = translateTexts[i] && _.camelCase(translateTexts[i] as string);
+      const transText = translateTexts[i];
       let transKey = `${suggestion.length ? suggestion.join('.') + '.' : ''}${transText}`;
       transKey = transKey.replace(/-/g, '_');
       if (langsPrefix) {
@@ -179,19 +179,23 @@ function getReplaceableStrs({
 //   return contentArray.map(() => `I${nanoid(8)}`);
 // }
 
+function getSortKey(n) {
+  let label = '';
+  while (n > 0) {
+    n--;
+    label = String.fromCharCode((n % 26) + 65) + label;
+    n = Math.floor(n / 26);
+  }
+  return label;
+}
+
 /**
  * 随机生成 key
  * @param {contentArray} 需要生成 key 的数组
  */
 
 function batchTranslateUseKey(contentArray) {
-  return contentArray.map((_, i) =>
-    `${String.fromCharCode(65 + Math.floor(Math.random() * 25))}_${i}`
-      .replace(/[^a-zA-Z0-9]/g, ' ')
-      .replace(/^\w|\s\.?\w/g, m => m.toUpperCase())
-      .split(/\s\.?/, 5)
-      .join('')
-  );
+  return contentArray.map((_, i) => getSortKey(contentArray.length - i));
 }
 
 function batchChangeDupKey({ targetPath, translateTexts, extractMap, dir }) {
@@ -210,14 +214,22 @@ function batchChangeDupKey({ targetPath, translateTexts, extractMap, dir }) {
     history[key] = 0;
   });
 
-  return translateTexts.map(item => {
+  const texts = translateTexts.map(item => {
     if (history[item] >= 0) {
       let index = history[item] + 1;
+      let newItem = `${item}_${index}`;
+      while (history[newItem] >= 0) {
+        index += 1;
+        newItem = `${item}_${index}`;
+      }
       history[item] = index;
-      return `${item}.${index}`;
+      history[newItem] = 0;
+      return newItem;
     }
+    history[item] = 0;
     return item;
   });
+  return texts;
 }
 
 /**
@@ -256,9 +268,10 @@ function extractAll({ dirPath, prefix }: { dirPath?: string; prefix?: string }) 
       return prev.concat([transOriginText]);
     }, []);
 
-    const translateTexts = await batchTranslateUseKey(translateOriginTexts);
+    let translateTexts = await batchTranslateUseKey(translateOriginTexts);
 
-    batchChangeDupKey({ targetPath: currentFilename, translateTexts, extractMap, dir });
+    translateTexts = batchChangeDupKey({ targetPath: currentFilename, translateTexts, extractMap, dir });
+
     if (translateTexts.length === 0) {
       failInfo(`未得到翻译结果，${currentFilename}替换失败！`);
       return;
@@ -295,7 +308,7 @@ function extractAll({ dirPath, prefix }: { dirPath?: string; prefix?: string }) 
       });
     }, Promise.resolve(0))
     .then(() => {
-      createFileAndDirectories(targetFilename, `${JSON.stringify(extractMap, null, 2)}`);
+      createFileAndDirectories(targetFilename, `${JSON.stringify(extractMap, null, 4)}`);
       successInfo(`全部替换完成！共替换${highlightText(result)}处文本`);
     })
     .catch((e: any) => {

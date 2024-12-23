@@ -87,9 +87,17 @@ function findTextInJsOrTs(code: string, isJSX = false) {
   });
   babelTraverse.default(ast, {
     StringLiteral(nodePath) {
-      if (nodePath.parentPath.node.type === 'CallExpression' && nodePath.parentPath.toString().includes('console')) {
+      let current = nodePath.parentPath;
+      if (current.node.type === 'CallExpression' && current.toString().includes('console')) {
         nodePath.skip();
         return;
+      }
+      while (current) {
+        if (current.node.type === 'TemplateLiteral') {
+          nodePath.skip();
+          return;
+        }
+        current = current.parentPath;
       }
       const { node } = nodePath;
       const { start, end, value } = node as babelTypes.StringLiteral;
@@ -106,20 +114,42 @@ function findTextInJsOrTs(code: string, isJSX = false) {
         matches.push({
           range,
           text: value,
-          type: 'string'
+          isString: true
         });
       }
     },
-    TemplateElement(nodePath) {
+    TemplateLiteral(nodePath) {
+      let current = nodePath.parentPath;
+      if (current.node.type === 'CallExpression' && current.toString().includes('console')) {
+        nodePath.skip();
+        return;
+      }
+      while (current) {
+        if (current.node.type === 'TemplateLiteral') {
+          nodePath.skip();
+          return;
+        }
+        current = current.parentPath;
+      }
       const { node } = nodePath;
-      const { start, end, value } = node as babelTypes.TemplateElement;
+      const { start, end } = node as babelTypes.TemplateLiteral;
       const templateContent = code.slice(start, end);
       if (templateContent.match(DOUBLE_BYTE_REGEX)) {
+        let expressions = [];
+        if (node.expressions) {
+          expressions = node.expressions.map(expression => {
+            const { start, end } = expression;
+            return code.slice(start, end);
+          });
+        }
+        if (node.quasis) {
+        }
         const range = { start, end };
         matches.push({
           range,
-          text: value.raw,
-          type: 'template'
+          text: code.slice(start + 1, end - 1),
+          expressions,
+          isString: true
         });
       }
     },
@@ -130,7 +160,7 @@ function findTextInJsOrTs(code: string, isJSX = false) {
         matches.push({
           range,
           text: value.trim(),
-          type: 'jsx'
+          isString: false
         });
       }
     }
