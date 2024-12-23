@@ -166,13 +166,10 @@ function findTextInTs(code: string, fileName: string) {
  */
 function findTextInJs(code: string) {
   const matches = [];
-  const ast = babelParser.parse(code, { 
-    sourceType: "module", 
-    plugins: [
-      'jsx',
-      'decorators-legacy'
-    ] 
-  })
+  const ast = babelParser.parse(code, {
+    sourceType: 'module',
+    plugins: ['jsx', 'decorators-legacy']
+  });
 
   babelTraverse.default(ast, {
     StringLiteral({ node }) {
@@ -190,10 +187,18 @@ function findTextInJs(code: string) {
       const { start, end } = node as babelTypes.TemplateLiteral;
       const templateContent = code.slice(start, end);
       if (templateContent.match(DOUBLE_BYTE_REGEX)) {
+        let expressions = [];
+        if (node.expressions) {
+          expressions = node.expressions.map(expression => {
+            const { start, end } = expression;
+            return code.slice(start, end);
+          });
+        }
         const range = { start, end };
         matches.push({
           range,
           text: code.slice(start + 1, end - 1),
+          expressions,
           isString: true
         });
       }
