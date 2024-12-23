@@ -203,18 +203,28 @@ function replaceAndUpdate(filePath, arg, val, validateDuplicate, needWrite = tru
     }
     // 若是模板字符串，看看其中是否包含变量
     if (last1Char === '`') {
-      const varInStr = arg.text.match(/(\$\{[^\}]+?\})/g);
-      if (varInStr) {
-        const kvPair = varInStr.map((str, index) => {
-          return `val${index + 1}: ${str.replace(/^\${([^\}]+)\}$/, '$1')}`;
+      if (arg.expressions) {
+        const kvPair = arg.expressions.map((expression, index) => {
+          return `val${index + 1}: ${expression}`;
         });
-        finalReplaceVal = `I18N.template(${val}, { ${kvPair.join(',\n')} })`;
-
-        varInStr.forEach((str, index) => {
-          finalReplaceText = finalReplaceText.replace(str, `{val${index + 1}}`);
+        finalReplaceVal = `I18N.template(${val}, {${kvPair.join(',\n')}})`;
+        arg.expressions.forEach((expression, index) => {
+          finalReplaceText = finalReplaceText.replace(`\${${expression}}`, `{val${index + 1}}`);
         });
       }
     }
+
+    // const varInStr = arg.text.match(/\$\{([^{}]*|\{[^{}]*\})*\}/g);
+    // if (varInStr) {
+    //   const kvPair = varInStr.map((str, index) => {
+    //     return `val${index + 1}: ${str.replace(/^\${([^\}]+)\}$/, '$1')}`;
+    //   });
+    //   finalReplaceVal = `I18N.template(${val}, { ${kvPair.join(',\n')} })`;
+
+    //   varInStr.forEach((str, index) => {
+    //     finalReplaceText = finalReplaceText.replace(str, `{val${index + 1}}`);
+    //   });
+    // }
 
     newCode = `${code.slice(0, start)}${finalReplaceVal}${code.slice(end)}`;
   } else {
