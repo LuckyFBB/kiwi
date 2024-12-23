@@ -55,13 +55,9 @@ function findAllChineseText(dir: string) {
     );
   });
   const allTexts = filterFiles.reduce((pre, file) => {
-    const code = readFile(file);
-    const texts = findChineseText(code, file);
+    const texts = findChineseText(file);
     // 调整文案顺序，保证从后面的文案往前替换，避免位置更新导致替换出错
     const sortTexts = _.sortBy(texts, obj => -obj.range.start);
-    if (texts.length > 0) {
-      console.log(`${highlightText(file)} 发现 ${highlightText(texts.length)} 处中文文案`);
-    }
 
     return texts.length > 0 ? pre.concat({ file, texts: sortTexts }) : pre;
   }, []);
@@ -259,7 +255,6 @@ function extractAll({ dirPath, prefix }: { dirPath?: string; prefix?: string }) 
   // 对当前文件进行文案key生成和替换
   const generateKeyAndReplace = async item => {
     const currentFilename = item.file;
-    console.log(`${currentFilename} 替换中...`);
     // 过滤掉模板字符串内的中文，避免替换时出现异常
     const targetStrs = item.texts;
 
@@ -291,7 +286,7 @@ function extractAll({ dirPath, prefix }: { dirPath?: string; prefix?: string }) 
 
           writeFile(currentFilename, code);
         }
-        successInfo(`${currentFilename} 替换完成，共替换 ${targetStrs.length} 处文案！`);
+        // successInfo(`${currentFilename} 替换完成，共替换 ${targetStrs.length} 处文案！`);
       })
       .catch(e => {
         failInfo(e.message);
@@ -309,7 +304,7 @@ function extractAll({ dirPath, prefix }: { dirPath?: string; prefix?: string }) 
     }, Promise.resolve(0))
     .then(() => {
       createFileAndDirectories(targetFilename, `${JSON.stringify(extractMap, null, 4)}`);
-      successInfo(`全部替换完成！共替换${highlightText(result)}处文本`);
+      successInfo(`全部替换完成！共替换${highlightText(result)}处文本；若还存在中文可以再次执行 kiwi 提取命令。`);
     })
     .catch((e: any) => {
       failInfo(e.message);

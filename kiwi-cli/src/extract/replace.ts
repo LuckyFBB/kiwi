@@ -26,7 +26,7 @@ function updateLangFiles(keyValue, text, validateDuplicate, extractMap) {
     throw new Error('duplicate');
   }
   // \n 会被自动转义成 \\n，这里转回来
-  text = text.replace(/\\n/gm, '\n');
+  text = text.replace(/\\n/gm, '\n').replace(/[\n\s]+/g, '');
   _.set(extractMap, fullKey, text);
 }
 

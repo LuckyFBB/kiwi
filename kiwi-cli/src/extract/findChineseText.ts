@@ -9,6 +9,8 @@ import * as babel from '@babel/core';
 import * as babelParser from '@babel/parser';
 import * as babelTraverse from '@babel/traverse';
 import * as babelTypes from '@babel/types';
+import { readFile } from './file';
+import { highlightText } from '../utils';
 /** unicode cjk 中日韩文 范围 */
 const DOUBLE_BYTE_REGEX = /[\u4E00-\u9FFF]/g;
 
@@ -75,8 +77,9 @@ function removeFileComment(code, fileName) {
  * 查找 JS/TS 文件中的中文
  * @Param code
  */
-function findTextInJsOrTs(code: string, isJSX = false) {
+function findTextInJsOrTs(file: string, isJSX = false) {
   const matches = [];
+  const code = readFile(file);
   const plugins: babelParser.ParserOptions['plugins'] = ['decorators-legacy', 'typescript'];
   if (isJSX) {
     plugins.push('jsx');
@@ -85,32 +88,28 @@ function findTextInJsOrTs(code: string, isJSX = false) {
     sourceType: 'module',
     plugins
   });
+  let count = 0;
   babelTraverse.default(ast, {
     StringLiteral(nodePath) {
+      const { node } = nodePath;
       let current = nodePath.parentPath;
       if (current.node.type === 'CallExpression' && current.toString().includes('console')) {
         nodePath.skip();
         return;
       }
-      while (current) {
-        if (current.node.type === 'TemplateLiteral') {
-          nodePath.skip();
-          return;
+      if (node.value.match(DOUBLE_BYTE_REGEX)) {
+        while (current) {
+          if (current.node.type === 'TemplateLiteral') {
+            nodePath.skip();
+            count += 1;
+            return;
+          }
+          current = current.parentPath;
         }
-        current = current.parentPath;
       }
-      const { node } = nodePath;
       const { start, end, value } = node as babelTypes.StringLiteral;
       if (value && value.match(DOUBLE_BYTE_REGEX)) {
         const range = { start, end };
-        if (nodePath.parentPath.node.type === 'JSXAttribute') {
-          matches.push({
-            range,
-            text: value,
-            type: 'jsx'
-          });
-          return;
-        }
         matches.push({
           range,
           text: value,
@@ -119,20 +118,23 @@ function findTextInJsOrTs(code: string, isJSX = false) {
       }
     },
     TemplateLiteral(nodePath) {
+      const { node } = nodePath;
+      const { start, end } = node as babelTypes.TemplateLiteral;
       let current = nodePath.parentPath;
       if (current.node.type === 'CallExpression' && current.toString().includes('console')) {
         nodePath.skip();
         return;
       }
-      while (current) {
-        if (current.node.type === 'TemplateLiteral') {
-          nodePath.skip();
-          return;
+      if (code.slice(start + 1, end - 1).match(DOUBLE_BYTE_REGEX)) {
+        while (current) {
+          if (current.node.type === 'TemplateLiteral') {
+            nodePath.skip();
+            count += 1;
+            return;
+          }
+          current = current.parentPath;
         }
-        current = current.parentPath;
       }
-      const { node } = nodePath;
-      const { start, end } = node as babelTypes.TemplateLiteral;
       const templateContent = code.slice(start, end);
       if (templateContent.match(DOUBLE_BYTE_REGEX)) {
         let expressions = [];
@@ -141,8 +143,6 @@ function findTextInJsOrTs(code: string, isJSX = false) {
             const { start, end } = expression;
             return code.slice(start, end);
           });
-        }
-        if (node.quasis) {
         }
         const range = { start, end };
         matches.push({
@@ -165,6 +165,9 @@ function findTextInJsOrTs(code: string, isJSX = false) {
       }
     }
   });
+  if (count > 0) {
+    console.log(`${highlightText(file)} 中存在${highlightText(count)}模板字符串的变量中嵌套中文，请做特殊处理`);
+  }
   return matches;
 }
 
@@ -172,7 +175,8 @@ function findTextInJsOrTs(code: string, isJSX = false) {
  * 查找 HTML 文件中的中文
  * @param code
  */
-function findTextInHtml(code) {
+function findTextInHtml(file) {
+  const code = readFile(file);
   const matches = [];
   const ast = compiler.parseTemplate(code, 'ast.html', {
     preserveWhitespaces: false
@@ -238,7 +242,8 @@ function findTextInHtml(code) {
  * 递归匹配vue代码的中文
  * @param code
  */
-function findTextInVue(code: string) {
+function findTextInVue(file: string) {
+  let code = readFile(file);
   let rexspace1 = new RegExp(/&ensp;/, 'g');
   let rexspace2 = new RegExp(/&emsp;/, 'g');
   let rexspace3 = new RegExp(/&nbsp;/, 'g');
@@ -419,15 +424,15 @@ function findVueText(ast) {
  * 递归匹配代码的中文
  * @param code
  */
-function findChineseText(code: string, fileName: string) {
+function findChineseText(fileName: string) {
   if (fileName.endsWith('.html')) {
-    return findTextInHtml(code);
+    return findTextInHtml(fileName);
   } else if (fileName.endsWith('.vue')) {
-    return findTextInVue(code);
+    return findTextInVue(fileName);
   } else if (fileName.endsWith('.js') || fileName.endsWith('.ts')) {
-    return findTextInJsOrTs(code);
+    return findTextInJsOrTs(fileName);
   } else if (fileName.endsWith('.jsx') || fileName.endsWith('.tsx')) {
-    return findTextInJsOrTs(code, true);
+    return findTextInJsOrTs(fileName, true);
   }
 }
 
