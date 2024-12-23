@@ -6,22 +6,23 @@
 import * as _ from 'lodash';
 import * as slash from 'slash2';
 import * as path from 'path';
-import * as colors from 'colors';
+import * as fs from 'fs';
 
 import { getSpecifiedFiles, readFile, writeFile, isFile, isDirectory } from './file';
 import { findChineseText } from './findChineseText';
 import { getSuggestLangObj } from './getLangData';
 import {
-  translateText,
   findMatchKey,
   findMatchValue,
-  translateKeyText,
   successInfo,
   failInfo,
-  highlightText
+  highlightText,
+  getLangDir,
+  createFileAndDirectories,
+  getProjectConfig,
+  getFilePathWithoutCwd
 } from '../utils';
 import { replaceAndUpdate, hasImportI18N, createImportI18N } from './replace';
-import { getProjectConfig } from '../utils';
 
 const CONFIG = getProjectConfig();
 
@@ -50,21 +51,13 @@ function findAllChineseText(dir: string) {
   }
   const filterFiles = files.filter(file => {
     return (
-      (isFile(file) && file.endsWith('.ts')) ||
-      file.endsWith('.tsx') ||
-      file.endsWith('.vue') ||
-      file.endsWith('.js') ||
-      file.endsWith('.jsx')
+      (isFile(file) && file.endsWith('.ts')) || file.endsWith('.tsx') || file.endsWith('.js') || file.endsWith('.jsx')
     );
   });
   const allTexts = filterFiles.reduce((pre, file) => {
-    const code = readFile(file);
-    const texts = findChineseText(code, file);
+    const texts = findChineseText(file);
     // 调整文案顺序，保证从后面的文案往前替换，避免位置更新导致替换出错
     const sortTexts = _.sortBy(texts, obj => -obj.range.start);
-    if (texts.length > 0) {
-      console.log(`${highlightText(file)} 发现 ${highlightText(texts.length)} 处中文文案`);
-    }
 
     return texts.length > 0 ? pre.concat({ file, texts: sortTexts }) : pre;
   }, []);
@@ -88,30 +81,15 @@ function getTransOriginText(text: string) {
  * @param currentFilename 文件路径
  * @returns string[]
  */
-function getSuggestion(currentFilename: string) {
-  let suggestion = [];
-  const suggestPageRegex = /\/pages\/\w+\/([^\/]+)\/([^\/\.]+)/;
+function getSuggestion(currentFilename: string, dirPath) {
+  const fileNameWithoutCwd = getFilePathWithoutCwd(currentFilename, dirPath);
 
-  if (currentFilename.includes('/pages/')) {
-    suggestion = currentFilename.match(suggestPageRegex);
-  }
-  if (suggestion) {
-    suggestion.shift();
-  }
-  /** 如果没有匹配到 Key */
-  if (!(suggestion && suggestion.length)) {
-    const names = slash(currentFilename).split('/');
-    const fileName = _.last(names) as any;
-    const fileKey = fileName.split('.')[0].replace(new RegExp('-', 'g'), '_');
-    const dir = names[names.length - 2].replace(new RegExp('-', 'g'), '_');
-    if (dir === fileKey) {
-      suggestion = [dir];
-    } else {
-      suggestion = [dir, fileKey];
-    }
-  }
-
-  return suggestion;
+  const names = slash(fileNameWithoutCwd).split('/');
+  const fileName = _.last(names) as any;
+  const fileKey = fileName.split('.')[0].replace(new RegExp('-', 'g'), '_');
+  const dir = names.slice(0, -1).join('.');
+  if (dir) return [dir, fileKey];
+  return [fileKey];
 }
 
 /**
@@ -122,10 +100,22 @@ function getSuggestion(currentFilename: string) {
  * @param targetStrs 当前文件提取后的文案
  * @returns any[] 最终可用于替换的key值和文案
  */
-function getReplaceableStrs(currentFilename: string, langsPrefix: string, translateTexts: string[], targetStrs: any[]) {
+function getReplaceableStrs({
+  currentFilename,
+  langsPrefix,
+  translateTexts,
+  targetStrs,
+  dir
+}: {
+  currentFilename: string;
+  langsPrefix: string;
+  translateTexts: string[];
+  targetStrs: any[];
+  dir: string;
+}) {
   const finalLangObj = getSuggestLangObj();
   const virtualMemory = {};
-  const suggestion = getSuggestion(currentFilename);
+  const suggestion = getSuggestion(currentFilename, dir);
   const replaceableStrs = targetStrs.reduce((prev, curr, i) => {
     const _text = curr.text;
     let key = findMatchKey(finalLangObj, _text);
@@ -141,7 +131,7 @@ function getReplaceableStrs(currentFilename: string, langsPrefix: string, transl
           needWrite: false
         });
       }
-      const transText = translateTexts[i] && _.camelCase(translateTexts[i] as string);
+      const transText = translateTexts[i];
       let transKey = `${suggestion.length ? suggestion.join('.') + '.' : ''}${transText}`;
       transKey = transKey.replace(/-/g, '_');
       if (langsPrefix) {
@@ -178,6 +168,67 @@ function getReplaceableStrs(currentFilename: string, langsPrefix: string, transl
 }
 
 /**
+ * 随机生成 key
+ * @param {contentArray} 需要生成 key 的数组
+ */
+// function batchTranslate(contentArray) {
+//   return contentArray.map(() => `I${nanoid(8)}`);
+// }
+
+function getSortKey(n) {
+  let label = '';
+  while (n > 0) {
+    n--;
+    label = String.fromCharCode((n % 26) + 65) + label;
+    n = Math.floor(n / 26);
+  }
+  return label;
+}
+
+/**
+ * 随机生成 key
+ * @param {contentArray} 需要生成 key 的数组
+ */
+
+function batchTranslateUseKey(contentArray) {
+  return contentArray.map((_, i) => getSortKey(contentArray.length - i));
+}
+
+function batchChangeDupKey({ targetPath, translateTexts, extractMap, dir }) {
+  const fileName = getFilePathWithoutCwd(targetPath, dir);
+
+  const objPath = fileName
+    .split('.')?.[0]
+    .split('/')
+    .join('.');
+
+  if (!objPath) return;
+
+  const history = {};
+
+  Object.keys(_.get(extractMap, objPath) ?? {}).forEach(key => {
+    history[key] = 0;
+  });
+
+  const texts = translateTexts.map(item => {
+    if (history[item] >= 0) {
+      let index = history[item] + 1;
+      let newItem = `${item}_${index}`;
+      while (history[newItem] >= 0) {
+        index += 1;
+        newItem = `${item}_${index}`;
+      }
+      history[item] = index;
+      history[newItem] = 0;
+      return newItem;
+    }
+    history[item] = 0;
+    return item;
+  });
+  return texts;
+}
+
+/**
  * 递归匹配项目中所有的代码的中文
  * @param {dirPath} 文件夹路径
  */
@@ -185,14 +236,6 @@ function extractAll({ dirPath, prefix }: { dirPath?: string; prefix?: string }) 
   const dir = dirPath || './';
   // 去除I18N
   const langsPrefix = prefix ? prefix.replace(/^I18N\./, '') : null;
-  // 翻译源配置错误，则终止
-  const origin = CONFIG.defaultTranslateKeyApi || 'Pinyin';
-  if (!['Pinyin', 'Google', 'Baidu'].includes(CONFIG.defaultTranslateKeyApi)) {
-    console.log(
-      `Kiwi 仅支持 ${highlightText('Pinyin、Google、Baidu')}，请修改 ${highlightText('defaultTranslateKeyApi')} 配置项`
-    );
-    return;
-  }
 
   const allTargetStrs = findAllChineseText(dir);
   if (allTargetStrs.length === 0) {
@@ -200,72 +243,40 @@ function extractAll({ dirPath, prefix }: { dirPath?: string; prefix?: string }) 
     return;
   }
 
-  // 提示翻译源
-  if (CONFIG.defaultTranslateKeyApi === 'Pinyin') {
-    console.log(
-      `当前使用 ${highlightText('Pinyin')} 作为key值的翻译源，若想得到更好的体验，可配置 ${highlightText(
-        'googleApiKey'
-      )} 或 ${highlightText('baiduApiKey')}，并切换 ${highlightText('defaultTranslateKeyApi')}`
-    );
-  } else {
-    console.log(`当前使用 ${highlightText(CONFIG.defaultTranslateKeyApi)} 作为key值的翻译源`);
-  }
+  const srcLangDir = getLangDir(CONFIG.srcLang);
+  const targetFilename = `${srcLangDir}/index.json`;
 
-  console.log('即将截取每个中文文案的前5位翻译生成key值，并替换中...');
+  let extractMap = {};
+  if (fs.existsSync(targetFilename)) {
+    const content = fs.readFileSync(targetFilename, 'utf-8') ?? '{}';
+    if (content) extractMap = JSON.parse(content);
+  }
 
   // 对当前文件进行文案key生成和替换
   const generateKeyAndReplace = async item => {
     const currentFilename = item.file;
-    console.log(`${currentFilename} 替换中...`);
     // 过滤掉模板字符串内的中文，避免替换时出现异常
-    const targetStrs = item.texts.reduce((pre, strObj, i) => {
-      // 因为文案已经根据位置倒排，所以比较时只需要比较剩下的文案即可
-      const afterStrs = item.texts.slice(i + 1);
-      if (afterStrs.some(obj => strObj.range.end <= obj.range.end)) {
-        return pre;
-      }
-      return pre.concat(strObj);
+    const targetStrs = item.texts;
+
+    const translateOriginTexts = targetStrs.reduce((prev, curr) => {
+      const transOriginText = getTransOriginText(curr.text);
+      return prev.concat([transOriginText]);
     }, []);
-    const len = item.texts.length - targetStrs.length;
-    if (len > 0) {
-      console.log(colors.red(`存在 ${highlightText(len)} 处文案无法替换，请避免在模板字符串的变量中嵌套中文`));
-    }
 
-    let translateTexts;
+    let translateTexts = await batchTranslateUseKey(translateOriginTexts);
 
-    if (origin !== 'Google') {
-      // 翻译中文文案，百度和pinyin将文案进行拼接统一翻译
-      const delimiter = origin === 'Baidu' ? '\n' : '$';
-      const translateOriginTexts = targetStrs.reduce((prev, curr, i) => {
-        const transOriginText = getTransOriginText(curr.text);
-        if (i === 0) {
-          return transOriginText;
-        }
-        return `${prev}${delimiter}${transOriginText}`;
-      }, []);
-
-      translateTexts = await translateKeyText(translateOriginTexts, origin);
-    } else {
-      // google并发性较好，且未找到有效的分隔符，故仍然逐个文案进行翻译
-      const translatePromises = targetStrs.reduce((prev, curr) => {
-        const transOriginText = getTransOriginText(curr.text);
-        return prev.concat(translateText(transOriginText, 'en_US'));
-      }, []);
-
-      [...translateTexts] = await Promise.all(translatePromises);
-    }
+    translateTexts = batchChangeDupKey({ targetPath: currentFilename, translateTexts, extractMap, dir });
 
     if (translateTexts.length === 0) {
       failInfo(`未得到翻译结果，${currentFilename}替换失败！`);
       return;
     }
-
-    const replaceableStrs = getReplaceableStrs(currentFilename, langsPrefix, translateTexts, targetStrs);
+    const replaceableStrs = getReplaceableStrs({ currentFilename, langsPrefix, translateTexts, targetStrs, dir });
 
     await replaceableStrs
       .reduce((prev, obj) => {
         return prev.then(() => {
-          return replaceAndUpdate(currentFilename, obj.target, `I18N.${obj.key}`, false, obj.needWrite);
+          return replaceAndUpdate(currentFilename, obj.target, `I18N.${obj.key}`, false, obj.needWrite, extractMap);
         });
       }, Promise.resolve())
       .then(() => {
@@ -275,21 +286,25 @@ function extractAll({ dirPath, prefix }: { dirPath?: string; prefix?: string }) 
 
           writeFile(currentFilename, code);
         }
-        successInfo(`${currentFilename} 替换完成，共替换 ${targetStrs.length} 处文案！`);
+        // successInfo(`${currentFilename} 替换完成，共替换 ${targetStrs.length} 处文案！`);
       })
       .catch(e => {
         failInfo(e.message);
       });
+    return targetStrs.length;
   };
 
+  let result = 0;
   allTargetStrs
     .reduce((prev, current) => {
-      return prev.then(() => {
+      return prev.then(res => {
+        result += res;
         return generateKeyAndReplace(current);
       });
-    }, Promise.resolve())
+    }, Promise.resolve(0))
     .then(() => {
-      successInfo('全部替换完成！');
+      createFileAndDirectories(targetFilename, `${JSON.stringify(extractMap, null, 4)}`);
+      successInfo(`全部替换完成！共替换${highlightText(result)}处文本；若还存在中文可以再次执行 kiwi 提取命令。`);
     })
     .catch((e: any) => {
       failInfo(e.message);

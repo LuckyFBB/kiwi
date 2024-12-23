@@ -9,6 +9,8 @@ import * as babel from '@babel/core';
 import * as babelParser from '@babel/parser';
 import * as babelTraverse from '@babel/traverse';
 import * as babelTypes from '@babel/types';
+import { readFile } from './file';
+import { highlightText } from '../utils';
 /** unicode cjk 中日韩文 范围 */
 const DOUBLE_BYTE_REGEX = /[\u4E00-\u9FFF]/g;
 
@@ -72,110 +74,39 @@ function removeFileComment(code, fileName) {
 }
 
 /**
- * 查找 Ts 文件中的中文
- * @param code
- */
-function findTextInTs(code: string, fileName: string) {
-  const matches = [];
-  const ast = ts.createSourceFile('', code, ts.ScriptTarget.ES2015, true, ts.ScriptKind.TSX);
-
-  function visit(node: ts.Node) {
-    switch (node.kind) {
-      case ts.SyntaxKind.StringLiteral: {
-        /** 判断 Ts 中的字符串含有中文 */
-        const { text } = node as ts.StringLiteral;
-        if (text.match(DOUBLE_BYTE_REGEX)) {
-          const start = node.getStart();
-          const end = node.getEnd();
-          const range = { start, end };
-          matches.push({
-            range,
-            text,
-            isString: true
-          });
-        }
-        break;
-      }
-      case ts.SyntaxKind.JsxElement: {
-        const { children } = node as ts.JsxElement;
-
-        children.forEach(child => {
-          if (child.kind === ts.SyntaxKind.JsxText) {
-            const text = child.getText();
-            /** 修复注释含有中文的情况，Angular 文件错误的 Ast 情况 */
-            const noCommentText = removeFileComment(text, fileName);
-
-            if (noCommentText.match(DOUBLE_BYTE_REGEX)) {
-              const start = child.getStart();
-              const end = child.getEnd();
-              const range = { start, end };
-
-              matches.push({
-                range,
-                text: text.trim(),
-                isString: false
-              });
-            }
-          }
-        });
-        break;
-      }
-      case ts.SyntaxKind.TemplateExpression: {
-        const { pos, end } = node;
-        const templateContent = code.slice(pos, end);
-
-        if (templateContent.match(DOUBLE_BYTE_REGEX)) {
-          const start = node.getStart();
-          const end = node.getEnd();
-          const range = { start, end };
-          matches.push({
-            range,
-            text: code.slice(start + 1, end - 1),
-            isString: true
-          });
-        }
-        break;
-      }
-      case ts.SyntaxKind.NoSubstitutionTemplateLiteral: {
-        const { pos, end } = node;
-        const templateContent = code.slice(pos, end);
-
-        if (templateContent.match(DOUBLE_BYTE_REGEX)) {
-          const start = node.getStart();
-          const end = node.getEnd();
-          const range = { start, end };
-          matches.push({
-            range,
-            text: code.slice(start + 1, end - 1),
-            isString: true
-          });
-        }
-      }
-    }
-
-    ts.forEachChild(node, visit);
-  }
-  ts.forEachChild(ast, visit);
-
-  return matches;
-}
-
-/**
- * 查找 JS 文件中的中文
+ * 查找 JS/TS 文件中的中文
  * @Param code
  */
-function findTextInJs(code: string) {
+function findTextInJsOrTs(file: string, isJSX = false) {
   const matches = [];
-  const ast = babelParser.parse(code, { 
-    sourceType: "module", 
-    plugins: [
-      'jsx',
-      'decorators-legacy'
-    ] 
-  })
-
+  const code = readFile(file);
+  const plugins: babelParser.ParserOptions['plugins'] = ['decorators-legacy', 'typescript'];
+  if (isJSX) {
+    plugins.push('jsx');
+  }
+  const ast = babelParser.parse(code, {
+    sourceType: 'module',
+    plugins
+  });
+  let count = 0;
   babelTraverse.default(ast, {
-    StringLiteral({ node }) {
+    StringLiteral(nodePath) {
+      const { node } = nodePath;
+      let current = nodePath.parentPath;
+      if (current.node.type === 'CallExpression' && current.toString().includes('console')) {
+        nodePath.skip();
+        return;
+      }
+      if (node.value.match(DOUBLE_BYTE_REGEX)) {
+        while (current) {
+          if (current.node.type === 'TemplateLiteral') {
+            nodePath.skip();
+            count += 1;
+            return;
+          }
+          current = current.parentPath;
+        }
+      }
       const { start, end, value } = node as babelTypes.StringLiteral;
       if (value && value.match(DOUBLE_BYTE_REGEX)) {
         const range = { start, end };
@@ -186,35 +117,57 @@ function findTextInJs(code: string) {
         });
       }
     },
-    TemplateLiteral({ node }) {
+    TemplateLiteral(nodePath) {
+      const { node } = nodePath;
       const { start, end } = node as babelTypes.TemplateLiteral;
+      let current = nodePath.parentPath;
+      if (current.node.type === 'CallExpression' && current.toString().includes('console')) {
+        nodePath.skip();
+        return;
+      }
+      if (code.slice(start + 1, end - 1).match(DOUBLE_BYTE_REGEX)) {
+        while (current) {
+          if (current.node.type === 'TemplateLiteral') {
+            nodePath.skip();
+            count += 1;
+            return;
+          }
+          current = current.parentPath;
+        }
+      }
       const templateContent = code.slice(start, end);
       if (templateContent.match(DOUBLE_BYTE_REGEX)) {
+        let expressions = [];
+        if (node.expressions) {
+          expressions = node.expressions.map(expression => {
+            const { start, end } = expression;
+            return code.slice(start, end);
+          });
+        }
         const range = { start, end };
         matches.push({
           range,
           text: code.slice(start + 1, end - 1),
+          expressions,
           isString: true
         });
       }
     },
-    JSXElement({ node }) {
-      const { children } = node as babelTypes.JSXElement;
-      children.forEach(child => {
-        if (babelTypes.isJSXText(child)) {
-          const { value, start, end } = child;
-          const range = { start, end };
-          if (value.match(DOUBLE_BYTE_REGEX)) {
-            matches.push({
-              range,
-              text: value.trim(),
-              isString: false
-            });
-          }
-        }
-      });
+    JSXText({ node }) {
+      const { value, start, end } = node;
+      const range = { start, end };
+      if (value.match(DOUBLE_BYTE_REGEX)) {
+        matches.push({
+          range,
+          text: value.trim(),
+          isString: false
+        });
+      }
     }
   });
+  if (count > 0) {
+    console.log(`${highlightText(file)} 中存在${highlightText(count)}模板字符串的变量中嵌套中文，请做特殊处理`);
+  }
   return matches;
 }
 
@@ -222,7 +175,8 @@ function findTextInJs(code: string) {
  * 查找 HTML 文件中的中文
  * @param code
  */
-function findTextInHtml(code) {
+function findTextInHtml(file) {
+  const code = readFile(file);
   const matches = [];
   const ast = compiler.parseTemplate(code, 'ast.html', {
     preserveWhitespaces: false
@@ -288,7 +242,8 @@ function findTextInHtml(code) {
  * 递归匹配vue代码的中文
  * @param code
  */
-function findTextInVue(code: string) {
+function findTextInVue(file: string) {
+  let code = readFile(file);
   let rexspace1 = new RegExp(/&ensp;/, 'g');
   let rexspace2 = new RegExp(/&emsp;/, 'g');
   let rexspace3 = new RegExp(/&nbsp;/, 'g');
@@ -469,15 +424,15 @@ function findVueText(ast) {
  * 递归匹配代码的中文
  * @param code
  */
-function findChineseText(code: string, fileName: string) {
+function findChineseText(fileName: string) {
   if (fileName.endsWith('.html')) {
-    return findTextInHtml(code);
+    return findTextInHtml(fileName);
   } else if (fileName.endsWith('.vue')) {
-    return findTextInVue(code);
-  } else if (fileName.endsWith('.js') || fileName.endsWith('.jsx')) {
-    return findTextInJs(code);
-  } else {
-    return findTextInTs(code, fileName);
+    return findTextInVue(fileName);
+  } else if (fileName.endsWith('.js') || fileName.endsWith('.ts')) {
+    return findTextInJsOrTs(fileName);
+  } else if (fileName.endsWith('.jsx') || fileName.endsWith('.tsx')) {
+    return findTextInJsOrTs(fileName, true);
   }
 }
 

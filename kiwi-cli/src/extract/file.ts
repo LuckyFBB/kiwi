@@ -23,10 +23,6 @@ function getSpecifiedFiles(dir, ignoreDirectory = [], ignoreFile = []) {
     const isDirectory = fs.statSync(name).isDirectory();
     const isFile = fs.statSync(name).isFile();
 
-    if (isDirectory) {
-      return files.concat(getSpecifiedFiles(name, standardIgnoreDirectory, standardIgnoreFile));
-    }
-
     const isIncludeDirectory =
       !(standardIgnoreDirectory || []).length ||
       !(standardIgnoreDirectory || []).some(ignoreDir => {
@@ -36,6 +32,10 @@ function getSpecifiedFiles(dir, ignoreDirectory = [], ignoreFile = []) {
           .join('/')
           .includes(ignoreDir);
       });
+
+    if (isDirectory && isIncludeDirectory) {
+      return files.concat(getSpecifiedFiles(name, standardIgnoreDirectory, standardIgnoreFile));
+    }
 
     const isIncludeFile =
       !(standardIgnoreFile || []).length ||
