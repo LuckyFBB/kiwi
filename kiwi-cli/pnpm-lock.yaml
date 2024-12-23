@@ -3,7 +3,9 @@ lockfileVersion: 5.3
 specifiers:
   '@angular/compiler': ^7.2.0
   '@babel/core': ^7.5.5
+  '@babel/generator': ^7.17.7
   '@babel/parser': ^7.20.3
+  '@babel/template': ^7.16.7
   '@babel/traverse': ^7.20.1
   '@babel/types': ^7.20.2
   '@types/commander': ^2.12.2
@@ -29,7 +31,9 @@ specifiers:
 dependencies:
   '@angular/compiler': 7.2.16
   '@babel/core': 7.26.0
+  '@babel/generator': 7.26.3
   '@babel/parser': 7.26.3
+  '@babel/template': 7.25.9
   '@babel/traverse': 7.26.4
   '@babel/types': 7.26.3
   '@types/commander': 2.12.5

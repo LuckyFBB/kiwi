@@ -9,6 +9,10 @@ import * as babel from '@babel/core';
 import * as babelParser from '@babel/parser';
 import * as babelTraverse from '@babel/traverse';
 import * as babelTypes from '@babel/types';
+import * as fs from 'fs';
+import * as _ from 'lodash';
+import generate from '@babel/generator';
+import template from '@babel/template';
 import { readFile } from './file';
 import { highlightText } from '../utils';
 /** unicode cjk 中日韩文 范围 */
@@ -436,4 +440,134 @@ function findChineseText(fileName: string) {
   }
 }
 
-export { findChineseText, findTextInVue };
+function generateInJsOrTs({
+  fileName,
+  fileKey,
+  extractMap,
+  isJSX = false
+}: {
+  fileName: string;
+  fileKey: string;
+  extractMap: any;
+  isJSX?: boolean;
+}) {
+  let count = 0;
+  function getSortKey(n) {
+    let label = '';
+    while (n > 0) {
+      n--;
+      label = String.fromCharCode((n % 26) + 65) + label;
+      n = Math.floor(n / 26);
+    }
+    return `${fileKey}.${label}`;
+  }
+  const sourceCode = readFile(fileName);
+  const plugins: babelParser.ParserOptions['plugins'] = ['decorators-legacy', 'typescript'];
+  if (isJSX) {
+    plugins.push('jsx');
+  }
+  const ast = babelParser.parse(sourceCode, {
+    sourceType: 'module',
+    plugins
+  });
+
+  babelTraverse.default(ast, {
+    StringLiteral(path) {
+      const { node } = path;
+      const { value } = node;
+      if (value.match(DOUBLE_BYTE_REGEX)) {
+        count++;
+        _.set(extractMap, getSortKey(count), value);
+        path.replaceWith(template.ast(`I18N.${getSortKey(count)}`));
+      }
+    },
+    TemplateLiteral(path) {
+      const { node } = path;
+      const { start, end } = node;
+      let templateContent = sourceCode.slice(start + 1, end - 1);
+      if (!templateContent.match(DOUBLE_BYTE_REGEX)) {
+        return;
+      }
+      if (!node.expressions.length) {
+        count++;
+        _.set(extractMap, getSortKey(count), templateContent);
+        path.replaceWith(template.ast(`I18N.${getSortKey(count)}`));
+        path.skip();
+        return;
+      }
+      const expressions = node.expressions.map(expression => {
+        const { start, end } = expression;
+        return sourceCode.slice(start, end);
+      });
+      const kvPair = expressions.map((expression, index) => {
+        templateContent = templateContent.replace(`\${${expression}}`, `{val${index + 1}}`);
+        return `val${index + 1}: ${expression}`;
+      });
+      count++;
+      _.set(extractMap, getSortKey(count), templateContent);
+      path.replaceWith(template.ast(`I18N.get(I18N.${getSortKey(count)},{${kvPair.join(',\n')}})`));
+    },
+    JSXText(path) {
+      const { node } = path;
+      const { value, start, end } = node;
+      if (value.match(DOUBLE_BYTE_REGEX)) {
+        _.set(extractMap, getSortKey(count), value);
+        count++;
+        path.replaceWithSourceString(`{I18N.${getSortKey(count)}}`);
+      }
+    },
+    JSXElement(path) {
+      const children = path.node.children;
+      const newChild = children.map(child => {
+        if (babelTypes.isJSXText(child)) {
+          const { value } = child;
+          if (value.match(DOUBLE_BYTE_REGEX)) {
+            const newExpression = babelTypes.jsxExpressionContainer(babelTypes.identifier(`I18N.${getSortKey(count)}`));
+            return newExpression;
+          }
+          return child;
+        }
+      });
+      path.node.children = newChild;
+    },
+    JSXAttribute(path) {
+      const { node } = path;
+      if (babelTypes.isStringLiteral(node.value) && node.value.value.match(DOUBLE_BYTE_REGEX)) {
+        count++;
+        // 生成键名并存储映射
+        const keyName = getSortKey(count);
+        extractMap[keyName] = node.value.value;
+        // 替换属性值为 JSXExpressionContainer 包装的 MemberExpression
+        const expression = babelTypes.jsxExpressionContainer(
+          babelTypes.memberExpression(babelTypes.identifier('I18N'), babelTypes.identifier(keyName))
+        );
+        node.value = expression; // 更新属性值
+      }
+    }
+  });
+  if (count !== 0) {
+    const { code } = generate(ast);
+    console.log(`==${fileName}==替换${count}个中文文本`);
+    fs.writeFileSync(fileName, code);
+  }
+}
+
+/**
+ * 递归匹配代码的中文
+ * @param code
+ */
+function generatorFile({ fileName, fileKey, extractMap }: { fileName: string; fileKey: string; extractMap: any }) {
+  if (fileName.endsWith('.html')) {
+    return findTextInHtml(fileName);
+  } else if (fileName.endsWith('.vue')) {
+    return findTextInVue(fileName);
+  } else if (fileName.endsWith('.js') || fileName.endsWith('.ts')) {
+    console.log(`== ${fileName}`);
+    return generateInJsOrTs({ fileName, fileKey, extractMap });
+  } else if (fileName.endsWith('.jsx') || fileName.endsWith('.tsx')) {
+    console.log(`== ${fileName}`);
+    return generateInJsOrTs({ fileName, fileKey, extractMap, isJSX: true });
+  }
+}
+
+export { findChineseText, generatorFile, findTextInVue };
