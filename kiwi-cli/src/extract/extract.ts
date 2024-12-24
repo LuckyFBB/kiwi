@@ -265,9 +265,13 @@ function extractAll({ dirPath, prefix }: { dirPath?: string; prefix?: string }) 
   const allFiles = findAllFiles(dir);
   const nums = allFiles.reduce((prev, fileName) => {
     const suggestion = getSuggestion(fileName, dir);
-    const fileKey = suggestion.join('.');
-    const curr = generatorFile({ fileName, fileKey, extractMap });
-    return prev + curr;
+    const fileKey = suggestion.join('.').replace(/-/g, '_');
+    try {
+      const curr = generatorFile({ fileName, fileKey, extractMap });
+      return prev + curr;
+    } catch (error) {
+      throw new Error(`${fileName} 提取文案失败, ${error.message}`);
+    }
   }, 0);
 
   console.log(`共提取${highlightText(nums)}处文案！`);
