@@ -441,7 +441,7 @@ function findChineseText(fileName: string) {
   }
 }
 
-function getSortKey(extractMap, fileKey, n) {
+function getSortKey(extractMap, n) {
   let label = '';
   let num = n;
   while (num > 0) {
@@ -449,9 +449,9 @@ function getSortKey(extractMap, fileKey, n) {
     label = String.fromCharCode((num % 26) + 65) + label;
     num = Math.floor(num / 26);
   }
-  const key = `${fileKey}.${label}`;
+  const key = `${label}`;
   if (_.get(extractMap, key)) {
-    return getSortKey(extractMap, fileKey, n + 1);
+    return getSortKey(extractMap, n + 1);
   }
   return key;
 }
@@ -484,6 +484,7 @@ function generateInJsOrTs({
   });
 
   let haveMoreTemplate = false;
+  const obj = _.get(extractMap, fileKey) ?? {};
 
   babelTraverse.default(ast, {
     StringLiteral(path) {
@@ -496,8 +497,8 @@ function generateInJsOrTs({
         return;
       }
       count++;
-      const key = getSortKey(extractMap, fileKey, count);
-      setIntoMap({ extractMap, key, value });
+      const key = getSortKey(obj, count);
+      setIntoMap({ extractMap: obj, key, value });
       path.replaceWith(template.ast(`I18N.${key}`));
     },
     TemplateLiteral(path) {
@@ -513,9 +514,9 @@ function generateInJsOrTs({
       }
       if (!node.expressions.length) {
         count++;
-        const key = getSortKey(extractMap, fileKey, count);
+        const key = getSortKey(obj, count);
 
-        setIntoMap({ extractMap, key, value: templateContent });
+        setIntoMap({ extractMap: obj, key, value: templateContent });
         path.replaceWith(template.ast(`I18N.${key}`));
         path.skip();
         return;
@@ -532,9 +533,9 @@ function generateInJsOrTs({
         haveMoreTemplate = true;
       }
       count++;
-      const key = getSortKey(extractMap, fileKey, count);
+      const key = getSortKey(obj, count);
 
-      setIntoMap({ extractMap, key, value: templateContent });
+      setIntoMap({ extractMap: obj, key, value: templateContent });
       path.replaceWith(template.ast(`I18N.get(I18N.${key},{${kvPair.join(',\n')}})`));
     },
     JSXElement(path) {
@@ -544,8 +545,8 @@ function generateInJsOrTs({
           const { value } = child;
           if (value.match(DOUBLE_BYTE_REGEX)) {
             count++;
-            const key = getSortKey(extractMap, fileKey, count);
-            setIntoMap({ extractMap, key, value });
+            const key = getSortKey(obj, count);
+            setIntoMap({ extractMap: obj, key, value });
             const newExpression = babelTypes.jsxExpressionContainer(babelTypes.identifier(`I18N.${key}`));
             return newExpression;
           }
@@ -558,8 +559,8 @@ function generateInJsOrTs({
       const { node } = path;
       if (babelTypes.isStringLiteral(node.value) && node.value.value.match(DOUBLE_BYTE_REGEX)) {
         count++;
-        const key = getSortKey(extractMap, fileKey, count);
-        setIntoMap({ extractMap, key, value: node.value.value });
+        const key = getSortKey(obj, count);
+        setIntoMap({ extractMap: obj, key, value: node.value.value });
         const expression = babelTypes.jsxExpressionContainer(
           babelTypes.memberExpression(babelTypes.identifier('I18N'), babelTypes.identifier(key))
         );
@@ -573,8 +574,8 @@ function generateInJsOrTs({
           const value = node.literal.value;
           if (value.match(DOUBLE_BYTE_REGEX)) {
             count++;
-            const key = getSortKey(extractMap, fileKey, count);
-            setIntoMap({ extractMap, key, value });
+            const key = getSortKey(obj, count);
+            setIntoMap({ extractMap: obj, key, value });
             return babelTypes.tsTypeReference(
               babelTypes.tsQualifiedName(babelTypes.identifier('I18N'), babelTypes.identifier(key))
             );
@@ -616,6 +617,8 @@ function generateInJsOrTs({
       retainLines: true,
       comments: true
     });
+    console.log('fileKey==', fileKey, obj);
+    _.set(extractMap, fileKey, obj);
     fs.writeFileSync(fileName, code);
   }
   return count;

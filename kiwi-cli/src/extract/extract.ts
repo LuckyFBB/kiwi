@@ -103,7 +103,11 @@ function getSuggestion(currentFilename: string, dirPath) {
 
   const names = slash(fileNameWithoutCwd).split('/');
   const fileName = _.last(names) as any;
-  const fileKey = fileName.split('.')[0].replace(new RegExp('-', 'g'), '_');
+  const fileKey = fileName
+    .split('.')
+    .slice(0, -1)
+    .join('.')
+    .replace(new RegExp('-', 'g'), '_');
   const dir = names.slice(0, -1).join('.');
   if (dir) return [dir, fileKey];
   return [fileKey];
