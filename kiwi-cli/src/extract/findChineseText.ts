@@ -14,7 +14,7 @@ import * as _ from 'lodash';
 import generate from '@babel/generator';
 import template from '@babel/template';
 import { readFile } from './file';
-import { highlightText } from '../utils';
+import { getProjectConfig, highlightText, successInfo } from '../utils';
 /** unicode cjk 中日韩文 范围 */
 const DOUBLE_BYTE_REGEX = /[\u4E00-\u9FFF]/g;
 
@@ -440,6 +440,25 @@ function findChineseText(fileName: string) {
   }
 }
 
+function getSortKey(extractMap, fileKey, n) {
+  let label = '';
+  let num = n;
+  while (num > 0) {
+    num--;
+    label = String.fromCharCode((num % 26) + 65) + label;
+    num = Math.floor(num / 26);
+  }
+  const key = `${fileKey}.${label}`;
+  if (_.get(extractMap, key)) {
+    return getSortKey(extractMap, fileKey, n + 1);
+  }
+  return key;
+}
+
+function setIntoMap({ extractMap, key, value }) {
+  _.set(extractMap, key, value.replace(/\\n/gm, '\n').replace(/[\n\s]+/g, ''));
+}
+
 function generateInJsOrTs({
   fileName,
   fileKey,
@@ -452,15 +471,7 @@ function generateInJsOrTs({
   isJSX?: boolean;
 }) {
   let count = 0;
-  function getSortKey(n) {
-    let label = '';
-    while (n > 0) {
-      n--;
-      label = String.fromCharCode((n % 26) + 65) + label;
-      n = Math.floor(n / 26);
-    }
-    return `${fileKey}.${label}`;
-  }
+  const CONFIG = getProjectConfig();
   const sourceCode = readFile(fileName);
   const plugins: babelParser.ParserOptions['plugins'] = ['decorators-legacy', 'typescript'];
   if (isJSX) {
@@ -477,8 +488,9 @@ function generateInJsOrTs({
       const { value } = node;
       if (value.match(DOUBLE_BYTE_REGEX)) {
         count++;
-        _.set(extractMap, getSortKey(count), value);
-        path.replaceWith(template.ast(`I18N.${getSortKey(count)}`));
+        const key = getSortKey(extractMap, fileKey, count);
+        setIntoMap({ extractMap, key, value });
+        path.replaceWith(template.ast(`I18N.${key}`));
       }
     },
     TemplateLiteral(path) {
@@ -490,8 +502,10 @@ function generateInJsOrTs({
       }
       if (!node.expressions.length) {
         count++;
-        _.set(extractMap, getSortKey(count), templateContent);
-        path.replaceWith(template.ast(`I18N.${getSortKey(count)}`));
+        const key = getSortKey(extractMap, fileKey, count);
+
+        setIntoMap({ extractMap, key, value: templateContent });
+        path.replaceWith(template.ast(`I18N.${key}`));
         path.skip();
         return;
       }
@@ -504,17 +518,11 @@ function generateInJsOrTs({
         return `val${index + 1}: ${expression}`;
       });
       count++;
-      _.set(extractMap, getSortKey(count), templateContent);
-      path.replaceWith(template.ast(`I18N.get(I18N.${getSortKey(count)},{${kvPair.join(',\n')}})`));
-    },
-    JSXText(path) {
-      const { node } = path;
-      const { value, start, end } = node;
-      if (value.match(DOUBLE_BYTE_REGEX)) {
-        _.set(extractMap, getSortKey(count), value);
-        count++;
-        path.replaceWithSourceString(`{I18N.${getSortKey(count)}}`);
-      }
+      const key = getSortKey(extractMap, fileKey, count);
+
+      setIntoMap({ extractMap, key, value: templateContent });
+      path.replaceWith(template.ast(`I18N.get(I18N.${key},{${kvPair.join(',\n')}})`));
+      path.visit();
     },
     JSXElement(path) {
       const children = path.node.children;
@@ -522,11 +530,14 @@ function generateInJsOrTs({
         if (babelTypes.isJSXText(child)) {
           const { value } = child;
           if (value.match(DOUBLE_BYTE_REGEX)) {
-            const newExpression = babelTypes.jsxExpressionContainer(babelTypes.identifier(`I18N.${getSortKey(count)}`));
+            count++;
+            const key = getSortKey(extractMap, fileKey, count);
+            setIntoMap({ extractMap, key, value });
+            const newExpression = babelTypes.jsxExpressionContainer(babelTypes.identifier(`I18N.${key}`));
             return newExpression;
           }
-          return child;
         }
+        return child;
       });
       path.node.children = newChild;
     },
@@ -534,22 +545,46 @@ function generateInJsOrTs({
       const { node } = path;
       if (babelTypes.isStringLiteral(node.value) && node.value.value.match(DOUBLE_BYTE_REGEX)) {
         count++;
-        // 生成键名并存储映射
-        const keyName = getSortKey(count);
-        extractMap[keyName] = node.value.value;
-        // 替换属性值为 JSXExpressionContainer 包装的 MemberExpression
+        const key = getSortKey(extractMap, fileKey, count);
+        setIntoMap({ extractMap, key, value: node.value.value });
         const expression = babelTypes.jsxExpressionContainer(
-          babelTypes.memberExpression(babelTypes.identifier('I18N'), babelTypes.identifier(keyName))
+          babelTypes.memberExpression(babelTypes.identifier('I18N'), babelTypes.identifier(key))
         );
-        node.value = expression; // 更新属性值
+        node.value = expression;
+      }
+    },
+    Program: {
+      exit(path) {
+        if (count > 0) {
+          const existingImport = path.node.body.find(node => {
+            return babelTypes.isImportDeclaration(node) && node.source.value?.includes('i18n');
+          });
+          if (!existingImport) {
+            const importI18N = CONFIG.importI18N;
+            const result = importI18N
+              .replace(/^import\s+|\s+from\s+/g, ',')
+              .split(',')
+              .filter(Boolean);
+            const importDeclaration = babelTypes.importDeclaration(
+              [babelTypes.importDefaultSpecifier(babelTypes.identifier(result[0]))],
+              babelTypes.stringLiteral(result[1])
+            );
+            // 插入 import 声明到最顶部
+            path.node.body.unshift(importDeclaration);
+          }
+        }
       }
     }
   });
   if (count !== 0) {
-    const { code } = generate(ast);
-    console.log(`==${fileName}==替换${count}个中文文本`);
+    const { code } = generate(ast, {
+      retainLines: true,
+      comments: true
+    });
+    successInfo(`== ${fileName} ==替换${count}个中文文本`);
     fs.writeFileSync(fileName, code);
   }
+  return count;
 }
 
 /**
@@ -562,10 +597,10 @@ function generatorFile({ fileName, fileKey, extractMap }: { fileName: string; fi
   } else if (fileName.endsWith('.vue')) {
     return findTextInVue(fileName);
   } else if (fileName.endsWith('.js') || fileName.endsWith('.ts')) {
-    console.log(`== ${fileName}`);
+    // console.log('fileName', fileName);
     return generateInJsOrTs({ fileName, fileKey, extractMap });
   } else if (fileName.endsWith('.jsx') || fileName.endsWith('.tsx')) {
-    console.log(`== ${fileName}`);
+    // console.log('fileName', fileName);
     return generateInJsOrTs({ fileName, fileKey, extractMap, isJSX: true });
   }
 }

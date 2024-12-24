@@ -263,11 +263,14 @@ function extractAll({ dirPath, prefix }: { dirPath?: string; prefix?: string }) 
   }
 
   const allFiles = findAllFiles(dir);
-  allFiles.forEach(fileName => {
+  const nums = allFiles.reduce((prev, fileName) => {
     const suggestion = getSuggestion(fileName, dir);
     const fileKey = suggestion.join('.');
-    generatorFile({ fileName, fileKey, extractMap });
-  });
+    const curr = generatorFile({ fileName, fileKey, extractMap });
+    return prev + curr;
+  }, 0);
+
+  console.log(`共提取${highlightText(nums)}处文案！`);
 
   createFileAndDirectories(targetFilename, `${JSON.stringify(extractMap, null, 4)}`);
 
