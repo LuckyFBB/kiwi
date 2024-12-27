@@ -274,12 +274,12 @@ function extractAll({ dirPath, prefix }: { dirPath?: string; prefix?: string }) 
       const curr = generatorFile({ fileName, fileKey, extractMap });
       return prev + curr;
     } catch (error) {
+      createFileAndDirectories(targetFilename, `${JSON.stringify(extractMap, null, 4)}`);
       throw new Error(`${fileName} 提取文案失败, ${error.message}`);
     }
   }, 0);
 
   console.log(`共提取${highlightText(nums)}处文案！`);
-
   createFileAndDirectories(targetFilename, `${JSON.stringify(extractMap, null, 4)}`);
 
   // const allTargetStrs = findAllChineseText(dir);

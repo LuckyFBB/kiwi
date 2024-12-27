@@ -617,7 +617,6 @@ function generateInJsOrTs({
       retainLines: true,
       comments: true
     });
-    console.log('fileKey==', fileKey, obj);
     _.set(extractMap, fileKey, obj);
     fs.writeFileSync(fileName, code);
   }
