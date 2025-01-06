@@ -499,7 +499,7 @@ function generateInJsOrTs({
       count++;
       const key = getSortKey(obj, count);
       setIntoMap({ extractMap: obj, key, value });
-      path.replaceWith(template.ast(`I18N.${key}`));
+      path.replaceWith(template.ast(`I18N.${fileKey}.${key}`));
     },
     TemplateLiteral(path) {
       const { node } = path;
@@ -517,7 +517,7 @@ function generateInJsOrTs({
         const key = getSortKey(obj, count);
 
         setIntoMap({ extractMap: obj, key, value: templateContent });
-        path.replaceWith(template.ast(`I18N.${key}`));
+        path.replaceWith(template.ast(`I18N.${fileKey}.${key}`));
         path.skip();
         return;
       }
@@ -536,7 +536,7 @@ function generateInJsOrTs({
       const key = getSortKey(obj, count);
 
       setIntoMap({ extractMap: obj, key, value: templateContent });
-      path.replaceWith(template.ast(`I18N.get(I18N.${key},{${kvPair.join(',\n')}})`));
+      path.replaceWith(template.ast(`I18N.get(I18N.${fileKey}.${key},{${kvPair.join(',\n')}})`));
     },
     JSXElement(path) {
       const children = path.node.children;
@@ -547,7 +547,7 @@ function generateInJsOrTs({
             count++;
             const key = getSortKey(obj, count);
             setIntoMap({ extractMap: obj, key, value });
-            const newExpression = babelTypes.jsxExpressionContainer(babelTypes.identifier(`I18N.${key}`));
+            const newExpression = babelTypes.jsxExpressionContainer(babelTypes.identifier(`I18N.${fileKey}.${key}`));
             return newExpression;
           }
         }
@@ -562,7 +562,7 @@ function generateInJsOrTs({
         const key = getSortKey(obj, count);
         setIntoMap({ extractMap: obj, key, value: node.value.value });
         const expression = babelTypes.jsxExpressionContainer(
-          babelTypes.memberExpression(babelTypes.identifier('I18N'), babelTypes.identifier(key))
+          babelTypes.memberExpression(babelTypes.identifier('I18N'), babelTypes.identifier(`${fileKey}.${key}`))
         );
         node.value = expression;
       }
@@ -577,7 +577,7 @@ function generateInJsOrTs({
             const key = getSortKey(obj, count);
             setIntoMap({ extractMap: obj, key, value });
             return babelTypes.tsTypeReference(
-              babelTypes.tsQualifiedName(babelTypes.identifier('I18N'), babelTypes.identifier(key))
+              babelTypes.tsQualifiedName(babelTypes.identifier('I18N'), babelTypes.identifier(`${fileKey}.${key}`))
             );
           }
         }

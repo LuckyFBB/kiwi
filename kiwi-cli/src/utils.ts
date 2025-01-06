@@ -52,7 +52,7 @@ function getKiwiDir() {
   const config = getProjectConfig();
 
   if (config) {
-    return config.kiwiDir;
+    return config.localeDir;
   }
 }
 

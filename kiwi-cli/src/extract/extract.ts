@@ -27,10 +27,10 @@ import { replaceAndUpdate, hasImportI18N, createImportI18N } from './replace';
 const CONFIG = getProjectConfig();
 
 /**
- * 剔除 kiwiDir 下的文件
+ * 剔除 localeDir 下的文件
  */
 function removeLangsFiles(files: string[]) {
-  const langsDir = path.resolve(process.cwd(), CONFIG.kiwiDir);
+  const langsDir = path.resolve(process.cwd(), CONFIG.localeDir);
   return files.filter(file => {
     const completeFile = path.resolve(process.cwd(), file);
     return !completeFile.includes(langsDir);

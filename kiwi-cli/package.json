@@ -19,7 +19,6 @@
   "bin": {
     "kiwi": "dist/index.js"
   },
-  "author": "linhuiw",
   "license": "ISC",
   "bugs": {
     "url": "https://github.com/alibaba/kiwi/issues"
@@ -29,7 +28,6 @@
   "dependencies": {
     "@angular/compiler": "^7.2.0",
     "@babel/core": "^7.5.5",
-
     "@babel/generator": "^7.17.7",
     "@babel/parser": "^7.20.3",
     "@babel/template": "^7.16.7",
