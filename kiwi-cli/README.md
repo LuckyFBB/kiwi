@@ -21,7 +21,7 @@ kiwi --init [type]
 ```js
 {
   // kiwi文件根目录，用于放置提取的langs文件
-  "kiwiDir": "./.kiwi",
+  "localeDir": "./.kiwi",
   // kiwi目录生成文件类型，ts或者js，默认ts
   "fileType": "ts",
   // 配置文件目录，若调整配置文件，此处可手动修改

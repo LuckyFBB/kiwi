@@ -8,9 +8,14 @@ import * as compilerVue from 'vue-template-compiler';
 import * as babel from '@babel/core';
 import * as babelParser from '@babel/parser';
 import * as babelTraverse from '@babel/traverse';
-import * as babelTypes from '@babel/types';
+// import * as babelTypes from '@babel/types';
+const babelTypes = require('@babel/types');
+import * as fs from 'fs';
+import * as _ from 'lodash';
+import generate from '@babel/generator';
+import template from '@babel/template';
 import { readFile } from './file';
-import { highlightText } from '../utils';
+import { failInfo, getProjectConfig, highlightText, successInfo } from '../utils';
 /** unicode cjk 中日韩文 范围 */
 const DOUBLE_BYTE_REGEX = /[\u4E00-\u9FFF]/g;
 
@@ -107,7 +112,7 @@ function findTextInJsOrTs(file: string, isJSX = false) {
           current = current.parentPath;
         }
       }
-      const { start, end, value } = node as babelTypes.StringLiteral;
+      const { start, end, value } = node;
       if (value && value.match(DOUBLE_BYTE_REGEX)) {
         const range = { start, end };
         matches.push({
@@ -119,7 +124,7 @@ function findTextInJsOrTs(file: string, isJSX = false) {
     },
     TemplateLiteral(nodePath) {
       const { node } = nodePath;
-      const { start, end } = node as babelTypes.TemplateLiteral;
+      const { start, end } = node;
       let current = nodePath.parentPath;
       if (current.node.type === 'CallExpression' && current.toString().includes('console')) {
         nodePath.skip();
@@ -436,4 +441,202 @@ function findChineseText(fileName: string) {
   }
 }
 
-export { findChineseText, findTextInVue };
+function getSortKey(extractMap, n) {
+  let label = '';
+  let num = n;
+  while (num > 0) {
+    num--;
+    label = String.fromCharCode((num % 26) + 65) + label;
+    num = Math.floor(num / 26);
+  }
+  const key = `${label}`;
+  if (_.get(extractMap, key)) {
+    return getSortKey(extractMap, n + 1);
+  }
+  return key;
+}
+
+function setIntoMap({ extractMap, key, value }) {
+  _.set(extractMap, key, value.replace(/\\n/gm, '\n').replace(/[\n\s]+/g, ''));
+}
+
+function generateInJsOrTs({
+  fileName,
+  fileKey,
+  extractMap,
+  isJSX = false
+}: {
+  fileName: string;
+  fileKey: string;
+  extractMap: any;
+  isJSX?: boolean;
+}) {
+  let count = 0;
+  const CONFIG = getProjectConfig();
+  const sourceCode = readFile(fileName);
+  const plugins: babelParser.ParserOptions['plugins'] = ['decorators-legacy', 'typescript'];
+  if (isJSX) {
+    plugins.push('jsx');
+  }
+  const ast = babelParser.parse(sourceCode, {
+    sourceType: 'module',
+    plugins
+  });
+
+  let haveMoreTemplate = false;
+  const obj = _.get(extractMap, fileKey) ?? {};
+
+  babelTraverse.default(ast, {
+    StringLiteral(path) {
+      const { node } = path;
+      const { value } = node;
+      if (
+        !value.match(DOUBLE_BYTE_REGEX) ||
+        (path.parentPath.node.type === 'CallExpression' && path.parentPath.toString().includes('console'))
+      ) {
+        return;
+      }
+      count++;
+      const key = getSortKey(obj, count);
+      setIntoMap({ extractMap: obj, key, value });
+      path.replaceWith(template.ast(`I18N.${fileKey}.${key}`));
+    },
+    TemplateLiteral(path) {
+      const { node } = path;
+      const { start, end } = node;
+      let templateContent = sourceCode.slice(start + 1, end - 1);
+      if (
+        !templateContent.match(DOUBLE_BYTE_REGEX) ||
+        (path.parentPath.node.type === 'CallExpression' && path.parentPath.toString().includes('console')) ||
+        path.parentPath.node.type === 'TaggedTemplateExpression'
+      ) {
+        return;
+      }
+      if (!node.expressions.length) {
+        count++;
+        const key = getSortKey(obj, count);
+
+        setIntoMap({ extractMap: obj, key, value: templateContent });
+        path.replaceWith(template.ast(`I18N.${fileKey}.${key}`));
+        path.skip();
+        return;
+      }
+      const expressions = node.expressions.map(expression => {
+        const { start, end } = expression;
+        return sourceCode.slice(start, end);
+      });
+      const kvPair = expressions.map((expression, index) => {
+        templateContent = templateContent.replace(`\${${expression}}`, `{val${index + 1}}`);
+        return `val${index + 1}: ${expression}`;
+      });
+      if (kvPair.some(item => item.includes('`'))) {
+        haveMoreTemplate = true;
+      }
+      count++;
+      const key = getSortKey(obj, count);
+
+      setIntoMap({ extractMap: obj, key, value: templateContent });
+      path.replaceWith(template.ast(`I18N.get(I18N.${fileKey}.${key},{${kvPair.join(',\n')}})`));
+    },
+    JSXElement(path) {
+      const children = path.node.children;
+      const newChild = children.map(child => {
+        if (babelTypes.isJSXText(child)) {
+          const { value } = child;
+          if (value.match(DOUBLE_BYTE_REGEX)) {
+            count++;
+            const key = getSortKey(obj, count);
+            setIntoMap({ extractMap: obj, key, value });
+            const newExpression = babelTypes.jsxExpressionContainer(babelTypes.identifier(`I18N.${fileKey}.${key}`));
+            return newExpression;
+          }
+        }
+        return child;
+      });
+      path.node.children = newChild;
+    },
+    JSXAttribute(path) {
+      const { node } = path;
+      if (babelTypes.isStringLiteral(node.value) && node.value.value.match(DOUBLE_BYTE_REGEX)) {
+        count++;
+        const key = getSortKey(obj, count);
+        setIntoMap({ extractMap: obj, key, value: node.value.value });
+        const expression = babelTypes.jsxExpressionContainer(
+          babelTypes.memberExpression(babelTypes.identifier('I18N'), babelTypes.identifier(`${fileKey}.${key}`))
+        );
+        node.value = expression;
+      }
+    },
+    TSUnionType(path) {
+      const { types } = path.node;
+      const newTypes = types.map(node => {
+        if (babelTypes.isTSLiteralType(node) && babelTypes.isStringLiteral(node.literal)) {
+          const value = node.literal.value;
+          if (value.match(DOUBLE_BYTE_REGEX)) {
+            count++;
+            const key = getSortKey(obj, count);
+            setIntoMap({ extractMap: obj, key, value });
+            return babelTypes.tsTypeReference(
+              babelTypes.tsQualifiedName(babelTypes.identifier('I18N'), babelTypes.identifier(`${fileKey}.${key}`))
+            );
+          }
+        }
+        return node;
+      });
+      path.node.types = newTypes;
+    },
+    Program: {
+      exit(path) {
+        if (count > 0) {
+          const importI18N = CONFIG.importI18N;
+          const result = importI18N
+            .replace(/^import\s+|\s+from\s+/g, ',')
+            .split(',')
+            .filter(Boolean);
+          const existingImport = path.node.body.find(node => {
+            return babelTypes.isImportDeclaration(node) && node.source.value === result[1];
+          });
+          if (!existingImport) {
+            const importDeclaration = babelTypes.importDeclaration(
+              [babelTypes.importDefaultSpecifier(babelTypes.identifier(result[0]))],
+              babelTypes.stringLiteral(result[1])
+            );
+            // 插入 import 声明到最顶部
+            path.node.body.unshift(importDeclaration);
+          }
+        }
+      }
+    }
+  });
+
+  if (haveMoreTemplate) {
+    console.log(`${highlightText(fileName)} 中存在模板字符串的变量中嵌套模板字符串，请做特殊处理`);
+  }
+  if (count !== 0) {
+    const { code } = generate(ast, {
+      retainLines: true,
+      comments: true
+    });
+    _.set(extractMap, fileKey, obj);
+    fs.writeFileSync(fileName, code);
+  }
+  return count;
+}
+
+/**
+ * 递归匹配代码的中文
+ * @param code
+ */
+function generatorFile({ fileName, fileKey, extractMap }: { fileName: string; fileKey: string; extractMap: any }) {
+  if (fileName.endsWith('.html')) {
+    return findTextInHtml(fileName);
+  } else if (fileName.endsWith('.vue')) {
+    return findTextInVue(fileName);
+  } else if (fileName.endsWith('.js') || fileName.endsWith('.ts')) {
+    return generateInJsOrTs({ fileName, fileKey, extractMap });
+  } else if (fileName.endsWith('.jsx') || fileName.endsWith('.tsx')) {
+    return generateInJsOrTs({ fileName, fileKey, extractMap, isJSX: true });
+  }
+}
+
+export { findChineseText, generatorFile, findTextInVue };

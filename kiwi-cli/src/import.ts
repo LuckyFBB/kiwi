@@ -45,9 +45,9 @@ function getMessagesToImport(file: string) {
 }
 
 function writeMessagesToFile(messages: any, file: string, lang: string) {
-  const kiwiDir = CONFIG.kiwiDir;
-  const srcMessages = require(path.resolve(kiwiDir, CONFIG.srcLang, file)).default;
-  const dstFile = path.resolve(kiwiDir, lang, file);
+  const localeDir = CONFIG.localeDir;
+  const srcMessages = require(path.resolve(localeDir, CONFIG.srcLang, file)).default;
+  const dstFile = path.resolve(localeDir, lang, file);
   const oldDstMessages = require(dstFile).default;
   const rst = {};
   traverse(srcMessages, (message, key) => {

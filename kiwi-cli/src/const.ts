@@ -3,12 +3,12 @@
  * @desc 项目配置文件配置信息
  */
 
-export const KIWI_CONFIG_FILE = 'kiwi-config.json';
+export const KIWI_CONFIG_FILE = 'i18n.config.json';
 
 export const PROJECT_CONFIG = {
   dir: './.kiwi',
   defaultConfig: {
-    kiwiDir: './.kiwi',
+    localeDir: './.kiwi',
     fileType: 'ts',
     srcLang: 'zh-CN',
     distLangs: ['en-US', 'zh-TW'],

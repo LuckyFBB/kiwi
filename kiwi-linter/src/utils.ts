@@ -256,7 +256,7 @@ export function getTargetLangPath(currentFilePath) {
       const { projects = [] } = JSON.parse(fs.readFileSync(configFile, 'utf8'));
       for (const config of projects) {
         if (currentFilePath.indexOf(`/${config.target}/`) > -1) {
-          targetLangPath = `${vscode.workspace.workspaceFolders[0].uri.fsPath}/${config.kiwiDir}/zh_CN/`;
+          targetLangPath = `${vscode.workspace.workspaceFolders[0].uri.fsPath}/${config.localeDir}/zh_CN/`;
           return targetLangPath;
         }
       }
